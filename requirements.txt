@@ -1,0 +1,9 @@
+fastmcp
+openai
+python-dotenv
+streamlit
+pydantic
+nest_asyncio
+langchain-community
+langchain
+langchain-openai
