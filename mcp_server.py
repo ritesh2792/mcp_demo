@@ -1,4 +1,3 @@
-# mcp_server.py
 import sys
 import json
 import sqlite3
@@ -26,7 +25,7 @@ def send_response(resp_obj):
     sys.stdout.write(json.dumps(resp_obj, ensure_ascii=False) + "\n")
     sys.stdout.flush()
 
-# ✅ Add user
+
 def handle_add_user(params):
     name = params.get("name", "").strip()
     email = params.get("email", "").strip().lower()
@@ -57,7 +56,7 @@ def handle_add_user(params):
         }
     }
 
-# ✅ List users
+
 def handle_list_users(_params):
     conn = sqlite3.connect(DB)
     cur = conn.cursor()
@@ -70,7 +69,7 @@ def handle_list_users(_params):
     ]
     return {"result": {"users": users}}
 
-# ✅ Update user
+
 def handle_update_user(params):
     user_id = params.get("id", "").strip()
     name = params.get("name", "").strip()
@@ -109,7 +108,7 @@ def handle_update_user(params):
     conn.close()
     return {"result": {"message": "User updated successfully"}}
 
-# ✅ Delete user
+
 def handle_delete_user(params):
     user_id = params.get("id", "").strip()
     if not user_id:
