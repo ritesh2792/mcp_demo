@@ -126,6 +126,55 @@ def handle_delete_user(params):
     conn.close()
     return {"result": {"message": "User deleted successfully"}}
 
+# --- Add somewhere near your handlers ---
+def handle_list_tools(_params):
+    # Very lightweight schema (you can make this JSONSchema if you like)
+    tools = [
+        {
+            "name": "add_user",
+            "description": "Add a new GCP user",
+            "required": ["name","email","role"],
+            "params_schema": {
+                "name":  {"type":"string", "description":"Full name"},
+                "email": {"type":"string", "description":"Email (unique)"},
+                "role":  {"type":"string", "description":"Role e.g. viewer, editor, admin"},
+            },
+        },
+        {
+            "name": "list_users",
+            "description": "List all users",
+            "required": [],
+            "params_schema": {},  # none required
+        },
+        {
+            "name": "update_user",
+            "description": "Update fields for an existing user by id",
+            "required": ["id"],   # id is required; others optional
+            "params_schema": {
+                "id":    {"type":"string", "description":"User ID (UUID)"},
+                "name":  {"type":"string", "description":"New name (optional)"},
+                "email": {"type":"string", "description":"New email (optional)"},
+                "role":  {"type":"string", "description":"New role (optional)"},
+            },
+        },
+        {
+            "name": "delete_user",
+            "description": "Delete user by id",
+            "required": ["id"],
+            "params_schema": {
+                "id": {"type":"string", "description":"User ID (UUID)"},
+            },
+        },
+        # You can add more tools here later, e.g. send_email
+        # {
+        #   "name": "send_email",
+        #   "description": "Send email to a user",
+        #   "required": ["to","subject","body"],
+        #   "params_schema": {...},
+        # }
+    ]
+    return {"result": {"tools": tools}}
+
 def main_loop():
     init_db()
     sys.stderr.write("[MCP SERVER] Started and ready\n")
@@ -152,6 +201,8 @@ def main_loop():
             resp = handle_update_user(params)
         elif method == "delete_user":
             resp = handle_delete_user(params)
+        elif method == "list_tools":
+            resp = handle_list_tools(params)
         elif method == "ping":
             resp = {"result": {"ok": True}}
         else:
