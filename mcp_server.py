@@ -1,14 +1,18 @@
+# mcp_server.py
 import sys
 import json
 import sqlite3
-import uuid
 from datetime import datetime
 
 DB = "gcp_users.db"
 
+# -----------------------------
+# DB INIT
+# -----------------------------
 def init_db():
     conn = sqlite3.connect(DB)
     cur = conn.cursor()
+    # TEXT id so we can store short IDs like U001
     cur.execute("""
     CREATE TABLE IF NOT EXISTS gcp_users (
         id TEXT PRIMARY KEY,
@@ -25,26 +29,61 @@ def send_response(resp_obj):
     sys.stdout.write(json.dumps(resp_obj, ensure_ascii=False) + "\n")
     sys.stdout.flush()
 
+# -----------------------------
+# ID GENERATION: U001, U002, ...
+# -----------------------------
+def next_user_id(cur) -> str:
+    """
+    Find the maximum numeric part of IDs that look like 'U<digits>'
+    and return the next one, zero-padded to 3 digits (U001, U002, ...).
+    If none found, start at U001.
+    """
+    cur.execute("""
+        SELECT id
+        FROM gcp_users
+        WHERE id GLOB 'U[0-9]*'
+        ORDER BY CAST(substr(id, 2) AS INTEGER) DESC
+        LIMIT 1
+    """)
+    row = cur.fetchone()
+    if not row:
+        return "U001"
+    last_id = row[0]  # e.g. "U007"
+    try:
+        n = int(last_id[1:]) + 1
+    except Exception:
+        n = 1
+    return f"U{n:03d}"
 
+# -----------------------------
+# HANDLERS
+# -----------------------------
 def handle_add_user(params):
-    name = params.get("name", "").strip()
-    email = params.get("email", "").strip().lower()
-    role = params.get("role", "").strip()
+    name = (params.get("name") or "").strip()
+    email = (params.get("email") or "").strip().lower()
+    role = (params.get("role") or "").strip()
     if not (name and email and role):
         return {"error": "name, email and role are required"}
-    user_id = str(uuid.uuid4())
+
     created_at = datetime.utcnow().isoformat() + "Z"
     conn = sqlite3.connect(DB)
     cur = conn.cursor()
+
     try:
+        # Generate short ID like U001, U002...
+        user_id = next_user_id(cur)
         cur.execute(
             "INSERT INTO gcp_users (id, name, email, role, created_at) VALUES (?, ?, ?, ?, ?)",
             (user_id, name, email, role, created_at)
         )
         conn.commit()
+    except sqlite3.IntegrityError as e:
+        conn.close()
+        return {"error": f"DB insert error (likely duplicate email): {e}"}
     except Exception as e:
         conn.close()
         return {"error": f"DB insert error: {e}"}
+
     conn.close()
     return {
         "result": {
@@ -56,11 +95,14 @@ def handle_add_user(params):
         }
     }
 
-
 def handle_list_users(_params):
     conn = sqlite3.connect(DB)
     cur = conn.cursor()
-    cur.execute("SELECT id, name, email, role, created_at FROM gcp_users ORDER BY created_at DESC")
+    cur.execute("""
+        SELECT id, name, email, role, created_at
+        FROM gcp_users
+        ORDER BY CAST(substr(id, 2) AS INTEGER) ASC
+    """)
     rows = cur.fetchall()
     conn.close()
     users = [
@@ -69,12 +111,29 @@ def handle_list_users(_params):
     ]
     return {"result": {"users": users}}
 
+def handle_get_user(params):
+    uid = (params.get("id") or "").strip()
+    if not uid:
+        return {"error": "id is required"}
+
+    conn = sqlite3.connect(DB)
+    cur = conn.cursor()
+    cur.execute("SELECT id, name, email, role, created_at FROM gcp_users WHERE id = ?", (uid,))
+    row = cur.fetchone()
+    conn.close()
+
+    if not row:
+        # Return empty result; client can show "No user found."
+        return {"result": {}}
+
+    user = {"id": row[0], "name": row[1], "email": row[2], "role": row[3], "created_at": row[4]}
+    return {"result": {"user": user}}
 
 def handle_update_user(params):
-    user_id = params.get("id", "").strip()
-    name = params.get("name", "").strip()
-    email = params.get("email", "").strip()
-    role = params.get("role", "").strip()
+    user_id = (params.get("id") or "").strip()
+    name = (params.get("name") or "").strip()
+    email = (params.get("email") or "").strip()
+    role = (params.get("role") or "").strip()
 
     if not user_id:
         return {"error": "id is required"}
@@ -92,7 +151,6 @@ def handle_update_user(params):
     if role:
         fields.append("role = ?")
         values.append(role)
-
     values.append(user_id)
 
     conn = sqlite3.connect(DB)
@@ -102,15 +160,17 @@ def handle_update_user(params):
         conn.commit()
         if cur.rowcount == 0:
             return {"error": "No user found with this ID"}
+    except sqlite3.IntegrityError as e:
+        conn.close()
+        return {"error": f"DB update error (likely duplicate email): {e}"}
     except Exception as e:
         conn.close()
         return {"error": f"DB update error: {e}"}
     conn.close()
     return {"result": {"message": "User updated successfully"}}
 
-
 def handle_delete_user(params):
-    user_id = params.get("id", "").strip()
+    user_id = (params.get("id") or "").strip()
     if not user_id:
         return {"error": "id is required"}
     conn = sqlite3.connect(DB)
@@ -126,58 +186,99 @@ def handle_delete_user(params):
     conn.close()
     return {"result": {"message": "User deleted successfully"}}
 
-# --- Add somewhere near your handlers ---
+# -------------------------------------------------
+# Example New Tool (kept commented for live demo)
+# -------------------------------------------------
+def handle_send_email(params):
+    """
+    Demo email sender.
+    In reality you'd integrate with SMTP or Gmail API here.
+    """
+    to = (params.get("to") or "").strip()
+    subject = (params.get("subject") or "").strip()
+    body = (params.get("body") or "").strip()
+    if not (to and subject and body):
+        return {"error": "to, subject and body are required"}
+    # Pretend email sent
+    return {
+        "result": {
+            "message": f"Email successfully sent to {to}",
+            "subject": subject,
+            "preview": body[:50] + ("..." if len(body) > 50 else "")
+        }
+    }
+
+# -----------------------------
+# TOOL DISCOVERY
+# -----------------------------
 def handle_list_tools(_params):
-    # Very lightweight schema (you can make this JSONSchema if you like)
     tools = [
         {
             "name": "add_user",
             "description": "Add a new GCP user",
-            "required": ["name","email","role"],
+            "required": ["name", "email", "role"],
             "params_schema": {
-                "name":  {"type":"string", "description":"Full name"},
-                "email": {"type":"string", "description":"Email (unique)"},
-                "role":  {"type":"string", "description":"Role e.g. viewer, editor, admin"},
+                "name":  {"type": "string", "description": "Full name"},
+                "email": {"type": "string", "description": "Email (unique)"},
+                "role":  {"type": "string", "description": "Role e.g. viewer, editor, admin"},
             },
         },
         {
             "name": "list_users",
             "description": "List all users",
             "required": [],
-            "params_schema": {},  # none required
+            "params_schema": {},
+        },
+        {
+            "name": "get_user",
+            "description": "Get a single user by short ID (e.g., U001)",
+            "required": ["id"],
+            "params_schema": {
+                "id": {"type": "string", "description": "Short user ID like U001"},
+            },
         },
         {
             "name": "update_user",
-            "description": "Update fields for an existing user by id",
-            "required": ["id"],   # id is required; others optional
+            "description": "Update fields for an existing user by short ID",
+            "required": ["id"],  # id required; others optional
             "params_schema": {
-                "id":    {"type":"string", "description":"User ID (UUID)"},
-                "name":  {"type":"string", "description":"New name (optional)"},
-                "email": {"type":"string", "description":"New email (optional)"},
-                "role":  {"type":"string", "description":"New role (optional)"},
+                "id":    {"type": "string", "description": "Short user ID like U001"},
+                "name":  {"type": "string", "description": "New name (optional)"},
+                "email": {"type": "string", "description": "New email (optional)"},
+                "role":  {"type": "string", "description": "New role (optional)"},
             },
         },
         {
             "name": "delete_user",
-            "description": "Delete user by id",
+            "description": "Delete user by short ID",
             "required": ["id"],
             "params_schema": {
-                "id": {"type":"string", "description":"User ID (UUID)"},
+                "id": {"type": "string", "description": "Short user ID like U001"},
             },
         },
-        # You can add more tools here later, e.g. send_email
-        # {
-        #   "name": "send_email",
-        #   "description": "Send email to a user",
-        #   "required": ["to","subject","body"],
-        #   "params_schema": {...},
-        # }
+        # -------------------------------------
+        # Example new tool (uncomment to enable)
+        {
+            "name": "send_email",
+            "description": "Send an email to a user (demo)",
+            "required": ["to", "subject", "body"],
+            "params_schema": {
+                "to": {"type": "string", "description": "Recipient email"},
+                "subject": {"type": "string", "description": "Email subject"},
+                "body": {"type": "string", "description": "Email body"},
+            },
+        },
+        # -------------------------------------
     ]
     return {"result": {"tools": tools}}
 
+# -----------------------------
+# MAIN LOOP (STDIO)
+# -----------------------------
 def main_loop():
     init_db()
-    sys.stderr.write("[MCP SERVER] Started and ready\n")
+    # Clear statement: STDIO (no TCP host/port)
+    sys.stderr.write("[MCP SERVER] Started and ready — transport=STDIO (no host/port)\n")
     sys.stderr.flush()
 
     for line in sys.stdin:
@@ -191,18 +292,22 @@ def main_loop():
             continue
 
         method = req.get("method")
-        params = req.get("params", {})
+        params = req.get("params", {}) or {}
 
         if method == "add_user":
             resp = handle_add_user(params)
         elif method == "list_users":
             resp = handle_list_users(params)
+        elif method == "get_user":
+            resp = handle_get_user(params)
         elif method == "update_user":
             resp = handle_update_user(params)
         elif method == "delete_user":
             resp = handle_delete_user(params)
         elif method == "list_tools":
             resp = handle_list_tools(params)
+        elif method == "send_email":
+            resp = handle_send_email(params)  # <— uncomment for demo
         elif method == "ping":
             resp = {"result": {"ok": True}}
         else:
